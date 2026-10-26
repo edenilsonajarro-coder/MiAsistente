@@ -87,7 +87,7 @@ private fun AssistantScreen(onSpeak: (String) -> Unit) {
             }
         }
         Column(Modifier.fillMaxWidth().background(Color(0xFF0C1E30), RoundedCornerShape(20.dp)).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Box(Modifier.size(90.dp).background(Brush.radialGradient(listOf(Color(0xFF1E6A7B), Color(0xFF10263D)), CircleShape), CircleShape), contentAlignment = Alignment.Center) { Text("AI", color = Cyan, fontSize = 32.sp) }
+            Box(Modifier.size(90.dp).background(Brush.radialGradient(colors = listOf(Color(0xFF1E6A7B), Color(0xFF10263D))), CircleShape), contentAlignment = Alignment.Center) { Text("AI", color = Cyan, fontSize = 32.sp) }
             Spacer(Modifier.height(8.dp))
             Text("A TU SERVICIO", color = Color.White, fontWeight = FontWeight.SemiBold)
             Text(status, color = Cyan, fontSize = 10.sp)
