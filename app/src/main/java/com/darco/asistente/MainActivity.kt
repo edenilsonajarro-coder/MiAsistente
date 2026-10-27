@@ -41,6 +41,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -78,6 +84,12 @@ private fun AssistantScreen(onSpeak: (String) -> Unit) {
     var draft by remember { mutableStateOf("") }
     var status by remember { mutableStateOf("LISTO PARA AYUDARTE") }
     var voiceEnabled by remember { mutableStateOf(prefs.getBoolean("voice_enabled", true)) }
+    var apiKey by remember { mutableStateOf(prefs.getString("gemini_key", "") ?: "") }
+    var personality by remember { mutableStateOf(prefs.getString("personality", "Cercano, inteligente y natural") ?: "") }
+    var memory by remember { mutableStateOf(prefs.getString("memory", "") ?: "") }
+    var showSettings by remember { mutableStateOf(false) }
+    var showMemory by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val timeFormat = remember { SimpleDateFormat("HH:mm", Locale("es", "SV")) }
@@ -128,17 +140,49 @@ private fun AssistantScreen(onSpeak: (String) -> Unit) {
             else -> "Entiendo lo que escribes. En esta versión todavía no tengo un modelo de inteligencia artificial conectado, así que mis respuestas son limitadas. Cuando añadamos una conexión segura a una IA, podré conversar sobre muchos más temas."
         }
     }
+    suspend fun askOnline(prompt: String): String = withContext(Dispatchers.IO) {
+        val key = apiKey.trim()
+        if (key.isBlank()) throw IllegalStateException("Configura una clave de Gemini en Ajustes.")
+        val fullPrompt = "Responde siempre en español. Personalidad: $personality. Recuerdos autorizados: $memory.\n\n$prompt"
+        val parts = JSONArray().put(JSONObject().put("text", fullPrompt))
+        val body = JSONObject().put("contents", JSONArray().put(JSONObject().put("parts", parts)))
+            .put("generationConfig", JSONObject().put("temperature", 0.7).put("maxOutputTokens", 1200))
+        val conn = URL("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$key").openConnection() as HttpURLConnection
+        try {
+            conn.requestMethod = "POST"
+            conn.connectTimeout = 20000
+            conn.readTimeout = 30000
+            conn.doOutput = true
+            conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+            val code = conn.responseCode
+            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+            val response = stream.bufferedReader().use { it.readText() }
+            if (code !in 200..299) throw IllegalStateException("Error $code. Revisa la clave o el límite gratuito.")
+            JSONObject(response).optJSONArray("candidates")?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")?.optJSONObject(0)?.optString("text")
+                ?.takeIf { it.isNotBlank() } ?: "No recibí una respuesta de texto."
+        } finally { conn.disconnect() }
+    }
+
     fun send(raw: String) {
         val input = raw.trim()
         if (input.isBlank()) return
         history.add(ChatLine("TÚ", input, true, stamp()))
-        val answer = replyFor(input)
-        history.add(ChatLine("MI ASISTENTE", answer, false, stamp()))
         draft = ""
-        status = "RESPUESTA LISTA"
+        status = if (apiKey.isBlank()) "MODO LOCAL" else "CONSULTANDO IA ONLINE…"
         saveHistory()
-        if (voiceEnabled) onSpeak(answer)
-        scope.launch { listState.animateScrollToItem((history.size - 1).coerceAtLeast(0)) }
+        scope.launch {
+            busy = true
+            val answer = if (apiKey.isNotBlank()) {
+                try { askOnline(input) } catch (e: Exception) { "No pude conectar con la IA: ${e.message ?: "error de conexión"}\n\nRespuesta local: ${replyFor(input)}" }
+            } else replyFor(input)
+            history.add(ChatLine("MI ASISTENTE", answer, false, stamp()))
+            saveHistory()
+            status = if (apiKey.isNotBlank() && !answer.startsWith("No pude conectar")) "IA ONLINE LISTA" else "RESPUESTA LOCAL"
+            if (voiceEnabled) onSpeak(answer)
+            busy = false
+            listState.animateScrollToItem((history.size - 1).coerceAtLeast(0))
+        }
     }
 
     val speechLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -269,7 +313,7 @@ private fun AssistantScreen(onSpeak: (String) -> Unit) {
                     Spacer(Modifier.width(7.dp)); Text(if (voiceEnabled) "VOZ ON" else "VOZ OFF")
                 }
             }
-            Text("El historial se guarda en este teléfono. No hay IA online conectada todavía.", color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
+            Text(if (apiKey.isBlank()) "Modo local. Configura la IA online en Ajustes." else "La IA online usa tu conexión y tu clave.", color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
         }
     }
 }
